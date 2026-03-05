@@ -1,9 +1,11 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import { prisma } from "../config/db";
+
 import {
   generateAccessToken,
   generateRefreshToken,
+  verifyToken,
   verifyRefreshToken
 } from "../utils/jwt";
 
@@ -15,6 +17,7 @@ const router = express.Router();
 // ==========================
 router.post("/register", async (req, res) => {
   try {
+
     const { email, password, role } = req.body;
 
     if (!email || !password) {
@@ -23,11 +26,11 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    const existing = await prisma.user.findUnique({
+    const existingUser = await prisma.user.findUnique({
       where: { email }
     });
 
-    if (existing) {
+    if (existingUser) {
       return res.status(400).json({
         error: "User already exists"
       });
@@ -35,7 +38,7 @@ router.post("/register", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
+    const newUser = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
@@ -44,18 +47,22 @@ router.post("/register", async (req, res) => {
     });
 
     res.json({
-      message: "User registered",
+      message: "User registered successfully",
       user: {
-        id: user.id,
-        email: user.email,
-        role: user.role
+        id: newUser.id,
+        email: newUser.email,
+        role: newUser.role
       }
     });
 
   } catch (error) {
+
+    console.error(error);
+
     res.status(500).json({
       error: "Registration failed"
     });
+
   }
 });
 
@@ -84,18 +91,17 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    const valid = await bcrypt.compare(
+    const validPassword = await bcrypt.compare(
       password,
       user.password
     );
 
-    if (!valid) {
+    if (!validPassword) {
       return res.status(401).json({
         error: "Invalid password"
       });
     }
 
-    // generate tokens
     const accessToken = generateAccessToken({
       userId: user.id,
       role: user.role
@@ -106,15 +112,15 @@ router.post("/login", async (req, res) => {
       role: user.role
     });
 
-    // save refresh token in DB
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        refreshToken
+        refreshToken: refreshToken
       }
     });
 
     res.json({
+      message: "Login successful",
       accessToken,
       refreshToken,
       user: {
@@ -125,15 +131,19 @@ router.post("/login", async (req, res) => {
     });
 
   } catch (error) {
+
+    console.error(error);
+
     res.status(500).json({
       error: "Login failed"
     });
+
   }
 });
 
 
 // ==========================
-// REFRESH TOKEN
+// REFRESH ACCESS TOKEN
 // ==========================
 router.post("/refresh", async (req, res) => {
   try {
@@ -168,9 +178,13 @@ router.post("/refresh", async (req, res) => {
     });
 
   } catch (error) {
+
+    console.error(error);
+
     res.status(403).json({
       error: "Invalid refresh token"
     });
+
   }
 });
 
@@ -202,10 +216,55 @@ router.post("/logout", async (req, res) => {
       message: "Logged out successfully"
     });
 
-  } catch {
+  } catch (error) {
+
+    console.error(error);
+
     res.status(400).json({
       error: "Logout failed"
     });
+
+  }
+});
+
+
+// ==========================
+// ADMIN ROUTE (PROTECTED)
+// ==========================
+router.get("/admin", async (req, res) => {
+  try {
+
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+      return res.status(401).json({
+        error: "No token provided"
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    const payload = verifyToken(token);
+
+    if (payload.role !== "ADMIN") {
+      return res.status(403).json({
+        error: "Forbidden: Admin only"
+      });
+    }
+
+    res.json({
+      message: "Welcome Admin",
+      user: payload
+    });
+
+  } catch (error) {
+
+    console.error(error);
+
+    res.status(401).json({
+      error: "Invalid token"
+    });
+
   }
 });
 
